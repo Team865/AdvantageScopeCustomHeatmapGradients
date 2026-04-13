@@ -487,7 +487,9 @@ export default class Field2dController implements TabController {
         case "heatmapLegacy":
           objects.push({
             type: "heatmap",
-            poses: poses
+            poses,
+            gradient: source.options.gradient || "default",
+            id: source.logKey
           });
           break;
         case "arrow":

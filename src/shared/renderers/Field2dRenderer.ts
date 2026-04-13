@@ -17,7 +17,7 @@ export default class Field2dRenderer implements TabRenderer {
   private IMAGE: HTMLImageElement;
   private HEATMAP_CONTAINER: HTMLElement;
 
-  private heatmap: Heatmap;
+  private heatmaps = new Map<string, Heatmap>();
   private lastImageSource = "";
   private aspectRatio = 1;
   private lastRenderState = "";
@@ -28,7 +28,6 @@ export default class Field2dRenderer implements TabRenderer {
     this.CANVAS = root.getElementsByClassName("field-2d-canvas")[0] as HTMLCanvasElement;
     this.IMAGE = document.createElement("img");
     this.HEATMAP_CONTAINER = root.getElementsByClassName("field-2d-heatmap-container")[0] as HTMLElement;
-    this.heatmap = new Heatmap(this.HEATMAP_CONTAINER);
     this.IMAGE.addEventListener("load", () => this.imageLoadCount++);
   }
 
@@ -260,23 +259,63 @@ export default class Field2dRenderer implements TabRenderer {
     };
 
     // Update heatmap data
-    let heatmapTranslations: Translation2d[] = [];
-    command.objects
-      .filter((object) => object.type === "heatmap")
-      .forEach((object) => {
-        heatmapTranslations = heatmapTranslations.concat(object.poses.map((pose) => pose.pose.translation));
-      });
-    this.heatmap.update(
-      heatmapTranslations,
-      [canvasFieldWidth, canvasFieldHeight],
-      [
-        Units.convert(fieldData.widthInches, "inches", "meters"),
-        Units.convert(fieldData.heightInches, "inches", "meters")
-      ]
+
+    const heatmapObjects = command.objects.filter(
+      (object): object is Field2dRendererCommand_HeatmapObj => object.type === "heatmap"
     );
-    let heatmapCanvas = this.heatmap.getCanvas();
-    if (heatmapCanvas !== null) {
-      context.drawImage(heatmapCanvas, canvasFieldLeft, canvasFieldTop);
+
+    const activeIds = new Set<string>();
+
+    heatmapObjects.forEach((object, index) => {
+      const id = object.id ?? `heatmap-${index}`;
+      activeIds.add(id);
+
+      // Get or create heatmap instance
+      let heatmap = this.heatmaps.get(id);
+
+      if (!heatmap) {
+        const container = document.createElement("div");
+        container.style.position = "absolute";
+        container.style.top = "0";
+        container.style.left = "0";
+        container.style.width = "100%";
+        container.style.height = "100%";
+        container.style.pointerEvents = "none";
+
+        this.HEATMAP_CONTAINER.appendChild(container);
+
+        heatmap = new Heatmap(container);
+        this.heatmaps.set(id, heatmap);
+      }
+
+      // Set gradient per heatmap instance
+      heatmap.setGradient(object.gradient ?? "default");
+
+      // Convert poses → translations
+      const pts: Translation2d[] = object.poses.map((p) => p.pose.translation);
+
+      // Update heatmap data
+      heatmap.update(
+        pts,
+        [canvasFieldWidth, canvasFieldHeight],
+        [
+          Units.convert(fieldData.widthInches, "inches", "meters"),
+          Units.convert(fieldData.heightInches, "inches", "meters")
+        ]
+      );
+
+      // Draw heatmap onto main canvas
+      const heatCanvas = heatmap.getCanvas();
+      if (heatCanvas) {
+        context.drawImage(heatCanvas, canvasFieldLeft, canvasFieldTop);
+      }
+    });
+
+    // Cleanup removed heatmaps
+    for (const [id, heatmap] of this.heatmaps.entries()) {
+      if (!activeIds.has(id)) {
+        this.heatmaps.delete(id);
+      }
     }
 
     // Draw objects
@@ -467,6 +506,8 @@ export type Field2dRendererCommand_TrajectoryObj = {
 export type Field2dRendererCommand_HeatmapObj = {
   type: "heatmap";
   poses: AnnotatedPose2d[];
+  gradient?: string;
+  id?: string;
 };
 
 export type Field2dRendererCommand_ArrowObj = {
